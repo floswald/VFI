@@ -1,0 +1,8 @@
+authors = ["Florian Oswald <florian.oswald@gmail.com>"]
+name = "cudaVFI"
+uuid = "0ee9aef2-6a58-11e8-011c-2bde8171ac5c"
+version = "0.1.0"
+
+[deps]
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+ProfileView = "c46f51b8-102a-5cf2-8d2c-8597cb0e0da7"

@@ -170,6 +170,8 @@ int main()
   fileValue.close();
   filePolicy.close();
 
+  cout << "done after " << solTime << endl;
+
   return 0;
 
 }

@@ -1,0 +1,52 @@
+{
+	"eta" : {
+		"value" : 2.0,
+		"description" : "CRRA",
+		"symbol" : "\\eta"
+	},
+	"beta" : {
+		"value" : 0.984,
+		"description" : "time discount factor",
+		"symbol" : "\\beta"
+	},
+	"alpha" : {
+		"value" : 0.35,
+		"description" : "capital share in prod func",
+		"symbol" : "\\alpha"
+	},
+	"delta" : {
+		"value" : 0.01,
+		"description" : "Rate of capital depreciation",
+		"symbol" : "\\delta"
+	},
+	"mu" : {
+		"value" : 0.0,
+		"description" : "TFP mean",
+		"symbol" : "\\mu"
+	},
+	"rho" : {
+		"value" : 0.95,
+		"description" : "TFP persistence",
+		"symbol" : "\\rho"
+	},
+	"sigma" : {
+		"value" : 0.005,
+		"description" : "TFP volatility",
+		"symbol" : "\\sigma"
+	},
+	"nk" : {
+		"value" : 100,
+		"description" : "number of k grid points",
+		"symbol" : "\\n_k"
+	},
+	"nz" : {
+		"value" : 4,
+		"description" : "number of z grid points",
+		"symbol" : "\\n_z"
+	},
+	"tol" : {
+		"value" : 1e-5,
+		"description" : "convergence tolerance",
+		"symbol" : "\\tau"
+	}         
+}

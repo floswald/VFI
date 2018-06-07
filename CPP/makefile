@@ -3,6 +3,7 @@ CPP  = g++
 SDIR = .
 
 # Eigen Headers
+# EIG_INC = /usr/local/Cellar/eigen/3.3.4/include/eigen3/
 EIG_INC = /usr/local/Eigen
 
 # Include standard optimization flags

@@ -1,6 +1,8 @@
 module cudaVFI
 
 	using JSON
+	using CUDAnative
+	using CUDAdrv
 
 	greet() = print("Hello World!")
 
@@ -49,7 +51,7 @@ module cudaVFI
 			this.zgrid = exp.(this.zgrid)
 			kmin              = 0.95*(((1/(p.alpha*this.zgrid[1]))*((1/p.beta)-1+p.delta))^(1/(p.alpha-1)))
 			kmax              = 1.05*(((1/(p.alpha*this.zgrid[end]))*((1/p.beta)-1+p.delta))^(1/(p.alpha-1)))
-			this.kgrid        = range(kmin,step                                                               = (kmax-kmin)/(p.nk-1),length = p.nk)
+			this.kgrid        = range(kmin,step = (kmax-kmin)/(p.nk-1),length = p.nk)
 			this.fkgrid       = (this.kgrid).^p.alpha
 			this.counter      = 0
 			# output plus depreciated capital
@@ -116,6 +118,76 @@ module cudaVFI
 			end
 		end
 		return m
+	end
+
+	# pairwise_dist_kernel(lat::CuDeviceVector{Float32}, lon::CuDeviceVector{Float32},
+ #                              rowresult::CuDeviceMatrix{Float32}, n)
+
+	# function kernel_vadd(a, b, c)
+	#     i = (blockIdx().x-1) * blockDim().x + threadIdx().x
+	#     c[i] = a[i] + b[i]
+
+	#     return nothing
+	# end
+
+	function pairwise_dist_kernel(lat::CuDeviceVector{Float32}, lon::CuDeviceVector{Float32},
+                              rowresult::CuDeviceMatrix{Float32}, n)
+	    i = (blockIdx().x-1) * blockDim().x + threadIdx().x
+	    j = (blockIdx().y-1) * blockDim().y + threadIdx().y
+
+	    if i <= n && j <= n
+	        # store to shared memory
+	        shmem = @cuDynamicSharedMem(Float32, 2*blockDim().x + 2*blockDim().y)
+	        if threadIdx().y == 1
+	            shmem[threadIdx().x] = lat[i]
+	            shmem[blockDim().x + threadIdx().x] = lon[i]
+	        end
+	        if threadIdx().x == 1
+	            shmem[2*blockDim().x + threadIdx().y] = lat[j]
+	            shmem[2*blockDim().x + blockDim().y + threadIdx().y] = lon[j]
+	        end
+	        sync_threads()
+
+	        # load from shared memory
+	        lat_i = shmem[threadIdx().x]
+	        lon_i = shmem[blockDim().x + threadIdx().x]
+	        lat_j = shmem[2*blockDim().x + threadIdx().y]
+	        lon_j = shmem[2*blockDim().x + blockDim().y + threadIdx().y]
+
+	        @inbounds rowresult[i, j] = my_gpu(lat_i, lon_i, lat_j, lon_j)
+	        # @inbounds rowresult[i, j] = haversine_gpu(lat_i, lon_i, lat_j, lon_j, 6372.8f0)
+	    end
+	end
+
+	function my_gpu(xi::Float32,yi::Float32,xj::Float32,yj::Float32)
+		return 2*xi + 3*yi - xj*yj
+	end
+
+	function pairwise_dist_gpu(lat::Vector{Float32}, lon::Vector{Float32})
+	    # upload
+	    lat_gpu = CuArray(lat)
+	    lon_gpu = CuArray(lon)
+
+	    # allocate
+	    n = length(lat)
+	    rowresult_gpu = CuArray{Float32}(n, n)
+
+	    # calculate launch configuration
+	    # NOTE: we want our launch configuration to be as square as possible,
+	    #       because that minimizes shared memory usage
+	    ctx = CuCurrentContext()
+	    dev = device(ctx)
+	    total_threads = min(n, attribute(dev, CUDAdrv.MAX_THREADS_PER_BLOCK))
+	    threads_x = floor(Int, sqrt(total_threads))
+	    threads_y = total_threads ÷ threads_x
+	    threads = (threads_x, threads_y)
+	    blocks = ceil.(Int, n ./ threads)
+
+	    # calculate size of dynamic shared memory
+	    shmem = 2 * sum(threads) * sizeof(Float32)
+
+	    @cuda blocks=blocks threads=threads shmem=shmem pairwise_dist_kernel(lat_gpu, lon_gpu, rowresult_gpu, n)
+    	return Array(rowresult_gpu)
 	end
 
 	function runGPU()

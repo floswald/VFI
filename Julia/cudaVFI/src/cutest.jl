@@ -47,7 +47,7 @@ vhm(ia::Int,iy::Int,ip::Int,ixm::Int,it::Int,ih::Int) = ( 1.1*ia + 0.5*iy + 3.3*
 
 # proof of concept
 function poc_impl1()
-	da = 1000
+	da = 500
 	dy = 5
 	dp = 10
 	dm = 30
@@ -57,16 +57,20 @@ function poc_impl1()
 	agrid = collect(range(0.1,step=0.001,length=da))
 	Vplus = agrid .- 0.4*agrid.^2
 
-	V = zeros(da*dy*dp*dm*dh*dt);
+	V = zeros(da,dy,dp,dm,dh,dt);
+	iV = zeros(Int,da,dy,dp,dm,dh,dt);
 
 	# loop over all states
-	for ia in eachindex(V,1)
-		for iy in eachindex(V,1)
-			for ip in eachindex(V,1)
-				for ixm in eachindex(V,1)
-					for it in eachindex(V,1)
-						for ih in eachindex(V,1)
-							V[sub2ind(ia,iy,ip,ixm,it,ih)] = vhm(ia,iy,ip,ixm,it,ih) + maximum(Vplus)
+	for ia in axes(V,1)
+		for iy in axes(V,2)
+			for ip in axes(V,3)
+				for ixm in axes(V,4)
+					for it in axes(V,5)
+						for ih in axes(V,6)
+							w = agrid .- 0.4*agrid.^2 .- vhm(ia,iy,ip,ixm,it,ih)
+							v,i = findmax(w)
+							V[LinearIndices(V)[ia,iy,ip,ixm,it,ih]] = v
+							iV[LinearIndices(V)[ia,iy,ip,ixm,it,ih]] = i
 						end
 					end
 				end
@@ -77,5 +81,5 @@ function poc_impl1()
 end
 
 function poc1()
-	@elapsed poc_impl1
+	@elapsed poc_impl1()
 end

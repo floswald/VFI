@@ -2,12 +2,11 @@
 # /opt/cuda-8.0/samples/1_Utilities/deviceQuery/deviceQuery
 
 
-function launcher(f::Function,nthread)
+function launcher(f::Function,nthread,nblocks)
 
-	x = CuArray(zeros(Int,16))
-	blocks = 4
+	x = CuArray(zeros(Int,nthread*nblocks))
 
-    @cuda blocks=blocks threads=nthread f(x)
+    @cuda blocks=nblocks threads=nthread f(x)
     return x
 end
 
@@ -22,13 +21,12 @@ function blockid(y::CuDeviceVector{Int})
 	y[idx] = blockIdx().x
 end
 
-function launcher2d(f::Function,nthread)
+function launcher2d(f::Function,nthread,nblocks)
 
-	x = CuArray(zeros(Int,8,2))
-	y = CuArray(zeros(Int,8,2))
-	blocks = 4
+	x = CuArray(zeros(Int,nthread,nblocks))
+	y = CuArray(zeros(Int,nthread,nblocks))
 
-    @cuda blocks=blocks threads=nthread f(x,y)
+    @cuda blocks=nblocks threads=nthread f(x,y)
     return x 
 end
 

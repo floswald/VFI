@@ -47,7 +47,7 @@ vhm(ia::Int,iy::Int,ip::Int,ixm::Int,it::Int,ih::Int) = ( 1.1*ia + 0.5*iy + 3.3*
 
 # proof of concept
 function poc_cpu1()
-	da = 500
+	da = 100
 	dy = 5
 	dp = 10
 	dm = 30
@@ -81,14 +81,14 @@ function poc_cpu1()
 end
 
 function poc_gpu1()
-	da = 500
+	da = 100
 	dy = 5
 	dp = 10
 	dm = 30
 	dt = 30
 	dh = 3
 
-	agrid = collect(range(0.1,step=0.001,length=da))
+	agrid = convert(Array{Float32},collect(range(0.1,step=0.001,length=da)))
 	a = CuArray(agrid)
 	V = CuArray{Float32}(da,dy,dp,dm,dh,dt);
 	iV = CuArray{Int}(da,dy,dp,dm,dh,dt);

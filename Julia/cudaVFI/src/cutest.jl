@@ -46,7 +46,7 @@ end
 vhm(ia::Int,iy::Int,ip::Int,ixm::Int,it::Int,ih::Int) = ( 1.1*ia + 0.5*iy + 3.3*ip + 0.1*ixm + 0.4*it ) * ih
 
 # proof of concept
-function poc_impl1()
+function poc_cpu1()
 	da = 500
 	dy = 5
 	dp = 10
@@ -57,7 +57,7 @@ function poc_impl1()
 	agrid = collect(range(0.1,step=0.001,length=da))
 	Vplus = agrid .- 0.4*agrid.^2
 
-	V = zeros(da,dy,dp,dm,dh,dt);
+	V = zeros(Float32,da,dy,dp,dm,dh,dt);
 	iV = zeros(Int,da,dy,dp,dm,dh,dt);
 
 	# loop over all states
@@ -79,6 +79,20 @@ function poc_impl1()
 	end
 	return V
 end
+
+function poc_kernel(V::CuDeviceArray{Float32},iV::CuDeviceArray{Int},a::CuDeviceVector{Float32})
+	idx = (blockIdx().x-1) * blockDim().x + threadIdx().x
+	ii = CartesianIndices(V)[idx]
+	w = zeros(a)
+	for i in 1:length(w)
+		w[i] = a - 0.4*a^2 - vhm(Tuple(ii)...)
+	end
+	v,i = findmax(w)
+	V[idx] = v
+	iV[idx] = i
+end
+
+
 
 function poc1()
 	@elapsed poc_impl1()

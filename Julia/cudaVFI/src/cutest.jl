@@ -112,6 +112,6 @@ end
 
 
 function poc1()
-	@elapsed poc_cpu1()
+	Base.@elapsed poc_cpu1()
 	CUDAdrv.@elapsed poc_gpu1()
 end

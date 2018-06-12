@@ -122,6 +122,7 @@ function max_kernel(v::CuDeviceVector{Float32},m::CuDeviceVector{Float32},ix::Cu
 		end
 	end
 	m[1] = r
+	return nothing
 	#return r
 end
 

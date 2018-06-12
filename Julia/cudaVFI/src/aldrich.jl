@@ -25,21 +25,21 @@ mutable struct Param
 end
 
 mutable struct Model 
-	V       :: Matrix{Float64}   # value fun
-	V0      :: Matrix{Float64}   # value fun
+	V       :: Matrix{Float32}   # value fun
+	V0      :: Matrix{Float32}   # value fun
 	G       :: Matrix{Int}   # policy fun
 	G0      :: Matrix{Int}   # policy fun
-	P       :: Matrix{Float64}   # transition matrix
-	zgrid   :: Vector{Float64}
-	kgrid   :: StepRangeLen{Float64}
-	fkgrid  :: Vector{Float64}
-	ydepK   :: Matrix{Float64}
+	P       :: Matrix{Float32}   # transition matrix
+	zgrid   :: Vector{Float32}
+	kgrid   :: StepRangeLen{Float32}
+	fkgrid  :: Vector{Float32}
+	ydepK   :: Matrix{Float32}
 	counter :: Int
 	function Model(p::Param)
 		this              = new()
-		this.V            = zeros(Float64,p.nk,p.nz)
+		this.V            = zeros(Float32,p.nk,p.nz)
 		this.G            = zeros(Int,p.nk,p.nz)
-		this.V0           = zeros(Float64,p.nk,p.nz)
+		this.V0           = zeros(Float32,p.nk,p.nz)
 		this.G0           = zeros(Int,p.nk,p.nz)
 		this.zgrid,this.P = rouwenhorst(p.rho,p.mu,p.sigma,p.nz)
 		this.zgrid = exp.(this.zgrid)
@@ -54,8 +54,35 @@ mutable struct Model
 	end
 end
 
+mutable struct CuModel 
+	V       :: CuMatrix{Float32}   # value fun
+	V0      :: CuMatrix{Float32}   # value fun
+	G       :: CuMatrix{Int}   # policy fun
+	G0      :: CuMatrix{Int}   # policy fun
+	P       :: CuMatrix{Float32}   # transition matrix
+	zgrid   :: CuVector{Float32}
+	kgrid   :: CuVector{Float32}
+	fkgrid  :: CuVector{Float32}
+	ydepK   :: CuMatrix{Float32}
+	counter :: Int
+	function CuModel(m::Model)
+		this         = new()
+		this.V       = CuArray(m.V)
+		this.G       = CuArray(m.G)
+		this.V0      = CuArray(m.V0)
+		this.G0      = CuArray(m.G0)
+		this.P       = CuArray(m.P)
+		this.zgrid   = CuArray(m.zgrid)
+		this.kgrid   = CuArray(convert(Vector{Float32},collect(m.kgrid)))
+		this.counter = 0
+		# output plus depreciated capital
+		this.ydepK = CuArray(m.ydepK)
+		return this
+	end
+end
 
-ufun(x::StepRangeLen{Float64},p::Param) = (x.^(1-p.eta))/(1-p.eta)
+ufun(x::StepRangeLen{Float32},p::Param) = (x.^(1-p.eta))/(1-p.eta)
+ufun(x::Float32,eta::Float32) = (x^(1-eta))/(1-eta)
 
 
 function rouwenhorst(rho::Float64,mu_eps::Float64,sigma_eps::Float64,n::Int)
@@ -101,13 +128,104 @@ function update(m::Model,p::Param)
 	return differ
 end
 
+function gpu_launcher(m::Model,p::Param)
+	V       = CuArray(m.V)
+	G       = CuArray(m.G)
+	V0      = CuArray(m.V0)
+	G0      = CuArray(m.G0)
+	P       = CuArray(m.P)
+	zgrid   = CuArray(m.zgrid)
+	kgrid   = CuArray(convert(Vector{Float32},collect(m.kgrid)))
+	counter = 0
+	ydepK = CuArray(m.ydepK)
+	n = length(V)
+
+	ma = CuVector{Float32}(1)
+	ix = CuVector{Int}(1)
+
+	# blocking setup
+	ctx = CuCurrentContext()
+    dev = device(ctx)
+
+    total_threads = min(n, attribute(dev, CUDAdrv.MAX_THREADS_PER_BLOCK))
+    threads_x = floor(Int, total_threads*(p.nk/(p.nk+p.nz)))
+    threads_y = total_threads ÷ threads_x
+    threads = (threads_x, threads_y)
+	blocks = ceil.(Int, n ./ threads)
+	@info("launch GPU on $blocks blocks, and $threads threads")
+
+	differ = 10.0
+
+	while abs(differ) > p.tol
+		# @cuda blocks=blocks threads=threads update_kernel(V,V0,G,ydepK,kgrid,m,ix,P,p.beta,p.eta)
+		cudaVFI.@cuda blocks=1000 threads=500 cudaVFI.update_kernel(V,V0,G,ydepK,kgrid,ma,ix,P,p.beta,p.eta)
+		sync_threads()
+		copy!(m.V[:,:],V)   # copy to host
+		differ = maximum(abs,m.V.-m.V0)
+		if mod(m.counter,50)==0
+			@info("count: $(m.counter), diff=$differ")
+		end
+		m.V0[:,:] = m.V  # update iteration array
+		copy!(V,m.V0)    # copy back to device
+		m.counter += 1
+	end
+	return m
+end	
+
+function update_kernel(V::CuDeviceMatrix{Float32},
+	                   V0::CuDeviceMatrix{Float32},
+	                   G::CuDeviceMatrix{Int},
+	                   ydepK::CuDeviceMatrix{Float32},
+	                   kgrid::CuDeviceVector{Float32},
+	                   m::CuDeviceVector{Float32},
+	                   ix::CuDeviceVector{Float32},
+	                   P::CuDeviceMatrix{Float32},
+	                   beta::Float64,eta::Float64)
+
+	# block x thread -> array index
+	ik = (blockIdx().x-1) * blockDim().x + threadIdx().x
+	iz = (blockIdx().y-1) * blockDim().y + threadIdx().y
+
+	# bounds on choice space
+	klo = 1
+	khi = searchsortedlast(kgrid,ydepK[ik,iz])
+	khi = khi > 0 ? khi-1 : khi 
+
+	# expected value
+	Exp = 0.0
+	for iik in 1:khi 
+		for iiz in 1:size(V,2)
+			Exp += P[iz,iiz] * V0[iik,iiz]
+		end
+	end
+
+	# maximization Vector
+	for i in 1:length(w)
+		w[i] = ufun(ydepK[ik,iz] - kgrid[i],eta) + beta * Exp 
+	end
+
+	# maximization
+	v = max_kernel(w,m,ix)
+
+	V[ik,iz] = m[1]
+	G[ik,iz] = ix[1]
+	return nothing
+end
+
+function runGPU()
+	p = Param()
+	m = Model(p)
+	m = gpu_launcher(m,p)
+end
+
 function runCPU()
+	# p = Param(Dict(:nk=>nk))
 	p = Param()
 	m = Model(p)
 	differ = 10.0
 	while abs(differ) > p.tol
 		differ = update(m,p)
-		if mod(m.counter,10)==0
+		if mod(m.counter,50)==0
 			@info("count: $(m.counter), diff=$differ")
 		end
 	end
@@ -184,15 +302,37 @@ function pairwise_dist_gpu(lat::Vector{Float32}, lon::Vector{Float32})
 	return Array(rowresult_gpu)
 end
 
-function runGPU()
-	p = Param()
-	m = Model(p)
-	differ = 10.0
-	while abs(differ) > p.tol
-		differ = update(m,p)
-		if mod(m.counter,10)==0
-			@info("count: $(m.counter), diff=$differ")
-		end
+# function runGPU()
+# 	p = Param()
+# 	m = Model(p)
+# 	differ = 10.0
+# 	while abs(differ) > p.tol
+# 		differ = update(m,p)
+# 		if mod(m.counter,10)==0
+# 			@info("count: $(m.counter), diff=$differ")
+# 		end
+# 	end
+# 	return m
+# end
+
+function shootout()
+
+	@info("running both once to precompile")
+	runCPU(2);
+	runGPU(2);
+	println()
+
+	for nk in range(100,step=50,length=5)
+		@info("now timing at nk=$nk:")
+		cpu = Base.@elapsed mc=runCPU(nk)
+		GC.gc()
+		gpu = CUDAdrv.@elapsed mg=runGPU(nk)
+		GC.gc()
+		maxdiff = maximum(abs,mc.V .- mg.V)
+		@info("cpu = $cpu")
+		@info("gpu = $gpu")
+		@info("cpu/gpu = $(cpu/gpu)")
+		@info("maxdiff = $maxdiff")
+		println()
 	end
-	return m
 end

@@ -80,6 +80,23 @@ function poc_cpu1()
 	return V
 end
 
+function poc_gpu1()
+	da = 500
+	dy = 5
+	dp = 10
+	dm = 30
+	dt = 30
+	dh = 3
+
+	agrid = collect(range(0.1,step=0.001,length=da))
+	a = CuArray(agrid)
+	V = CuArray{Float32}(da,dy,dp,dm,dh,dt);
+	iV = CuArray{Int}(da,dy,dp,dm,dh,dt);
+
+	@cuda blocks=1000 threads=length(V)/1000 poc_kernel(V,iV,a)
+
+end
+
 function poc_kernel(V::CuDeviceArray{Float32},iV::CuDeviceArray{Int},a::CuDeviceVector{Float32})
 	idx = (blockIdx().x-1) * blockDim().x + threadIdx().x
 	ii = CartesianIndices(V)[idx]
@@ -95,5 +112,6 @@ end
 
 
 function poc1()
-	@elapsed poc_impl1()
+	@elapsed poc_cpu1()
+	CUDAdrv.@elapsed poc_gpu1()
 end

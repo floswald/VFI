@@ -69,7 +69,7 @@ function poc_cpu1(;na::Int=100)
 				for ixm in axes(V,4)
 					for it in axes(V,5)
 						for ih in axes(V,6)
-							w = agrid .- 0.4*agrid.^2 .- vhm(ia,iy,ip,ixm,it,ih)
+							w = agrid .- 0.4*agrid.^2# .- LinearIndices(V)[ia,iy,ip,ixm,it,ih]
 							v,i = findmax(w)
 							V[LinearIndices(V)[ia,iy,ip,ixm,it,ih]] = v
 							iV[LinearIndices(V)[ia,iy,ip,ixm,it,ih]] = i
@@ -109,6 +109,7 @@ function poc_gpu1(;na::Int=100)
 
 
 	@cuda blocks=blocks threads=total_threads poc_kernel(V,iV,a,w,m,ix)
+	return Array(V)
 
 end
 
@@ -132,7 +133,7 @@ function poc_kernel(V::CuDeviceArray{Float32},iV::CuDeviceArray{Int},
 	# ii = CartesianIndices(V)[idx]
 	for i in 1:length(w)
 		# w[i] = a - 0.4*a^2 - vhm(Tuple(ii)...)
-		w[i] = a[i] - 0.4*a[i]^2 - vhm(1,1,1,1,1,1)
+		w[i] = a[i] - 0.4*a[i]^2 #- vhm(1,1,1,1,1,1)
 	end
 	v = max_kernel(w,m,ix)
 	V[idx] = m[1]
@@ -151,13 +152,14 @@ function poc1()
 
 	for na in range(100,step=50,length=5)
 		@info("now timing at na=$na:")
-		cpu = Base.@elapsed poc_cpu1(na=na)
+		cpu = Base.@elapsed vcpu=poc_cpu1(na=na)
 		GC.gc()
-		gpu = CUDAdrv.@elapsed poc_gpu1(na=na)
+		gpu = CUDAdrv.@elapsed vgpu=poc_gpu1(na=na)
 		GC.gc()
 		@info("cpu = $cpu")
 		@info("gpu = $gpu")
 		@info("cpu/gpu = $(cpu/gpu)")
+		@info("maxabs(diff) = $(maximum(abs,vcpu.-vgpu))")
 		println()
 	end
 

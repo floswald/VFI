@@ -128,6 +128,12 @@ function update(m::Model,p::Param)
 	return differ
 end
 
+function model() 
+	p=Param();
+	m=Model(p);
+	(m,p)
+end
+
 function gpu_launcher(m::Model,p::Param)
 	V       = CuArray(m.V)
 	G       = CuArray(m.G)
@@ -138,9 +144,12 @@ function gpu_launcher(m::Model,p::Param)
 	kgrid   = CuArray(convert(Vector{Float32},collect(m.kgrid)))
 	counter = 0
 	ydepK = CuArray(m.ydepK)
+	println("m.ydepK[1,1] = $(m.ydepK[1,1])")
 	n = length(V)
 
 	ma = CuVector{Float32}(1)
+	w  = CuVector{Float32}(length(kgrid))
+
 	ix = CuVector{Int}(1)
 
 	# blocking setup
@@ -156,40 +165,85 @@ function gpu_launcher(m::Model,p::Param)
 
 	differ = 10.0
 
-	while abs(differ) > p.tol
+	# while abs(differ) > p.tol
 		# @cuda blocks=blocks threads=threads update_kernel(V,V0,G,ydepK,kgrid,m,ix,P,p.beta,p.eta)
-		cudaVFI.@cuda blocks=1000 threads=500 cudaVFI.update_kernel(V,V0,G,ydepK,kgrid,ma,ix,P,p.beta,p.eta)
-		sync_threads()
-		copy!(m.V[:,:],V)   # copy to host
-		differ = maximum(abs,m.V.-m.V0)
-		if mod(m.counter,50)==0
-			@info("count: $(m.counter), diff=$differ")
-		end
-		m.V0[:,:] = m.V  # update iteration array
-		copy!(V,m.V0)    # copy back to device
-		m.counter += 1
-	end
-	return m
+		 @device_code_warntype cudaVFI.@cuda blocks=2 threads=(2,2) cudaVFI.update_kernel(V,V0,G,ydepK,kgrid,ma,w,ix,P,convert(Float32,p.beta),convert(Float32,p.eta))
+
+	# 	sync_threads()
+	# 	copy!(m.V[:,:],V)   # copy to host
+	# 	differ = maximum(abs,m.V.-m.V0)
+	# 	if mod(m.counter,50)==0
+	# 		@info("count: $(m.counter), diff=$differ")
+	# 	end
+	# 	m.V0[:,:] = m.V  # update iteration array
+	# 	copy!(V,m.V0)    # copy back to device
+	# 	m.counter += 1
+	# end
+	# return m
 end	
+
+
+# function kernel_vadd(a, b, c)
+#     i = (blockIdx().x-1) * blockDim().x + threadIdx().x
+#     @cuprintf("blockx= %d, blockDx=%d, threadid=%d\n",(blockIdx().x-1) , blockDim().x , threadIdx().x)
+#     c[i] = a[i] + b[i]
+
+#     return nothing
+# end
+
+
+# a = round.(rand(Float32, (3, 4)))
+# b = round.(rand(Float32, (3, 4)))
+# d_a = CuArray(a)
+# d_b = CuArray(b)
+# d_c = similar(d_a)  # output array
+
+# # run the kernel and fetch results
+# # syntax: @cuda [kwargs...] kernel(args...)
+# @cuda threads=12 kernel_vadd(d_a, d_b, d_c)
+
+function kernel(ydepK::CuDeviceMatrix{Float32})
+	x = ydepK[1,1]
+	# x = 1.0
+	y = CUDAnative.pow(x,2.0)
+	return nothing
+end
+
+function cutest()
+	y = rand(Float32,3,4)
+	cuy = CuArray(y)
+	@cuda blocks=2 threads=2 kernel(cuy)
+end
+
+
 
 function update_kernel(V::CuDeviceMatrix{Float32},
 	                   V0::CuDeviceMatrix{Float32},
 	                   G::CuDeviceMatrix{Int},
-	                   ydepK::CuDeviceMatrix{Float32},
+	                   ydepK::CuDeviceVector{Float32},
 	                   kgrid::CuDeviceVector{Float32},
 	                   m::CuDeviceVector{Float32},
-	                   ix::CuDeviceVector{Float32},
+	                   w::CuDeviceVector{Float32},
+	                   ix::CuDeviceVector{Int},
 	                   P::CuDeviceMatrix{Float32},
-	                   beta::Float64,eta::Float64)
+	                   beta::Float32,eta::Float32)
 
 	# block x thread -> array index
 	ik = (blockIdx().x-1) * blockDim().x + threadIdx().x
 	iz = (blockIdx().y-1) * blockDim().y + threadIdx().y
+	# iz = 1
+	# @cuprintf("iz = %d\n",iz)
+	# @cuprintf("ik = %d\n",ik)
 
 	# bounds on choice space
 	klo = 1
-	khi = searchsortedlast(kgrid,ydepK[ik,iz])
+	# @cuprintf("[ik,iz] = %d\n",iz)
+	@cuprintf("[iz,ik] = [ %ld , %ld ]\n",iz,ik)
+	# @cuprintf("iz = %d\n",iz)
+	# @cuprintf("ydepK[1,1] = %f\n",ydepK[1,1])
+	khi = searchsortedlast(kgrid,ydepK[ik+(iz-1)*4])
 	khi = khi > 0 ? khi-1 : khi 
+	# @cuprintf("klo = %d, khi = %d\n",klo,khi)
 
 	# expected value
 	Exp = 0.0
@@ -198,13 +252,20 @@ function update_kernel(V::CuDeviceMatrix{Float32},
 			Exp += P[iz,iiz] * V0[iik,iiz]
 		end
 	end
-
+	x = Float32(ydepK[1,1])
+	w[1] = CUDAnative.pow(x,2.0)
 	# maximization Vector
-	for i in 1:length(w)
-		w[i] = ufun(ydepK[ik,iz] - kgrid[i],eta) + beta * Exp 
-	end
+	# for i in 1:khi
+	# 		# CUDAnative.pow(1.0,2.0)#/(1-eta) + beta * Exp 
 
-	# maximization
+	# 		# CUDAnative.pow(ydepK[ik,iz] - kgrid[i],1-eta)#/(1-eta) + beta * Exp 
+	# 		# w[i] = CUDAnative.pow(ydepK[ik,iz] - kgrid[i],1-eta)/(1-eta) + beta * Exp 
+	# 		# w[i] = CUDAnative.pow(1.0,1-eta)/(1-eta) + beta * Exp 
+	# 	# w[i] = CUDAnative.pow(1.0,2.0) + beta * Exp 
+	# 	w[i] = CUDAnative.pow(x,2.0) + beta * Exp 
+	# end
+
+	# # maximization
 	v = max_kernel(w,m,ix)
 
 	V[ik,iz] = m[1]

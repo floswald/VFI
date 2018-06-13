@@ -1,5 +1,5 @@
 
-# /opt/cuda-8.0/samples/1_Utilities/deviceQuery/deviceQuery
+# /usr/local/cuda-9.2/samples/1_Utilities/deviceQuery/deviceQuery
 
 
 function launcher(f::Function,nthread,nblocks)
@@ -21,13 +21,13 @@ function blockid(y::CuDeviceVector{Int})
 	y[idx] = blockIdx().x
 end
 
-function launcher2d(f::Function,nthread,nblocks)
+function launcher2d(f::Function,dims,nthread,nblocks)
 
-	x = CuArray(zeros(Int,nthread,nblocks))
-	y = CuArray(zeros(Int,nthread,nblocks))
+	x = CuArray(zeros(Int,dims))
+	y = CuArray(zeros(Int,dims))
 
     @cuda blocks=nblocks threads=nthread f(x,y)
-    return x 
+    return (Array(x),Array(y))
 end
 
 function kernelid2d(x::CuDeviceMatrix{Int},y::CuDeviceMatrix{Int})
@@ -38,9 +38,11 @@ function kernelid2d(x::CuDeviceMatrix{Int},y::CuDeviceMatrix{Int})
 end
 
 
-function blockid2d(y::CuDeviceVector{Int})
-	idx = (blockIdx().x-1) * blockDim().x + threadIdx().x
-	y[idx] = blockIdx().x
+function blockid2d(x::CuDeviceMatrix{Int},y::CuDeviceMatrix{Int})
+	ix = (blockIdx().x-1) * blockDim().x + threadIdx().x
+	iy = (blockIdx().y-1) * blockDim().y + threadIdx().y
+	x[ix,iy] = blockIdx().x
+	y[ix,iy] = blockIdx().y
 end
 
 vhm(ia::Int,iy::Int,ip::Int,ixm::Int,it::Int,ih::Int) = ( 1.1*ia + 0.5*iy + 3.3*ip + 0.1*ixm + 0.4*it ) * ih
@@ -112,17 +114,37 @@ function poc_gpu1(;na::Int=100)
 	return Array(V)
 
 end
-
-function max_kernel(v::CuDeviceVector{Float32},m::CuDeviceVector{Float32},ix::CuDeviceVector{Int})
+function max_kernel_ub(v::CuDeviceVector{Float32},m::CuDeviceVector{Float32},ix::CuDeviceVector{Int},khi::Int)
 	r = v[1]
 	ix[1] = 1
-	for i in 2:length(v)
+	for i in 2:khi
+		# @cuprintf("v[i] = %lf\n",Float64(v[i]))
+		# @cuprintf("r = %lf,ix = %ld\n",r,ix[1])
 		if v[i] > r
 			r = v[i]
 			ix[1] = i
 		end
 	end
 	m[1] = r
+		# @cuprintf("returning m[1]= %lf,ix = %ld\n",Float64(m[1]),Int64(ix[1]))
+	return nothing
+	#return r
+end
+
+
+function max_kernel(v::CuDeviceVector{Float32},m::CuDeviceVector{Float32},ix::CuDeviceVector{Int})
+	r = v[1]
+	ix[1] = 1
+	for i in 2:length(v)
+		# @cuprintf("v[i] = %lf\n",Float64(v[i]))
+		# @cuprintf("r = %lf,ix = %ld\n",r,ix[1])
+		if v[i] > r
+			r = v[i]
+			ix[1] = i
+		end
+	end
+	m[1] = r
+		# @cuprintf("returning m[1]= %lf,ix = %ld\n",Float64(m[1]),Int64(ix[1]))
 	return nothing
 	#return r
 end

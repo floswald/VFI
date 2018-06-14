@@ -19,6 +19,12 @@ mutable struct Param
     	for (k,v) in j
             setfield!(this,Symbol(k),v["value"])
     	end
+        if length(par) > 0
+            # override parameters from dict p
+            for (k,v) in par
+                setfield!(this,k,v)
+            end
+        end
     	return this
 	end
 
@@ -173,17 +179,24 @@ function gpu_launcher(m::Model,p::Param)
 		@cuda blocks=cols threads=rows cudaVFI.update_kernel(V,V0,G,ydepK,kgrid,ma,w,ix,P,p.beta,p.eta)
 
 		# sync_threads()
-		# v1 = Array(V)
-		copyto!(m.V[:,:],V)   # copy to host
-		# println(v1)
-		differ = maximum(abs,m.V.-m.V0)
+		v1 = Array(V)
+		v0 = Array(V0)
+		# if m.counter==5
+			# println(v1.-v0)
+		# 	error()
+		# end
+		differ = maximum(abs,v1.-v0)
 		# if mod(m.counter,50)==0
 			@info("count: $(m.counter), diff=$differ")
+			# println("v1 = $v1")
+			# println("v0 = $v0")
 		# end
-		m.V0[:,:] = m.V  # update iteration array
-		copyto!(V0,m.V0)    # copy back to device
+		# m.V0[:,:] = m.V  # update iteration array
+		copyto!(V0,v1)
+		# V0 = CuArray(v0)
 		m.counter += 1
 	end
+	copyto!(m.V,Array(V))
 	return m
 end	
 
@@ -220,54 +233,73 @@ function update_kernel(V::CuDeviceMatrix{Float32},
 		# @cuprintf("[iz,ik] = [ %ld , %ld ]\n",iz,ik)
 		# @cuprintf("iz = %d\n",iz)
 		# @cuprintf("ydepK[1,1] = %f\n",ydepK[1,1])
-		# @cuprintf("comparing kgrid vs ydepK[ik,iz]: %lf vs %lf\n",Float64(kgrid[end]),Float64(ydepK[ik,iz]))
 		khi = searchsortedlast(kgrid,ydepK[ik,iz])
 		khi = khi > 0 ? khi-1 : khi 
-		# @cuprintf("klo = %ld, khi = %ld\n",klo,khi)
+		@assert(khi>0)
+		# if ik==1 & iz==1
+		# 	# @cuprintf("comparing kgrid vs ydepK[ik,iz]: %lf vs %lf\n",Float64(kgrid[end]),Float64(ydepK[ik,iz]))
+		# 	@cuprintf("klo = %ld, khi = %ld\n",klo,khi)
+		# end
 
 		# expected value
 		Exp = 0.0
-		for iik in 1:khi 
-			for iiz in 1:size(V,2)
-				Exp += P[iz,iiz] * V0[iik,iiz]
-			end
-		end
+		# for iik in 1:khi 
+		# 	for iiz in 1:size(V,2)
+		# 		Exp += P[iz,iiz] * V0[iik,iiz]
+		# 	end
+		# end
 		# x = Float32(ydepK[1,1])
 		# w[1] = CUDAnative.pow(x,2.0)
 		# maximization Vector
 		for i in 1:khi
-				# CUDAnative.pow(1.0,2.0)#/(1-eta) + beta * Exp 
+			# CUDAnative.pow(1.0,2.0)#/(1-eta) + beta * Exp 
+			Exp = 0.0
+			for iiz in 1:size(V,2)
+				Exp += P[iz,iiz] * V0[i,iiz]
+			end
 
-				# CUDAnative.pow(ydepK[ik,iz] - kgrid[i],1-eta)#/(1-eta) + beta * Exp 
-				# @cuprintf("ydepK[ik,iz] - kgrid[i]= %lf\n",convert(Float64,ydepK[ik,iz] - kgrid[i]))
-				# @cuprintf("ufun = %lf\n",CUDAnative.pow(convert(Float64,ydepK[ik,iz] - kgrid[i]),1-eta)/(1-eta))
-				w[i] = CUDAnative.pow(convert(Float64,ydepK[ik,iz] - kgrid[i]),1-eta)/(1-eta) + beta * Exp 
-				# if ydepK[ik,iz] - kgrid[i] < 0
-				# 	@cuprintf("ydepK[ik,iz] - kgrid[i]= %lf, w[i] = %lf\n",convert(Float64,ydepK[ik,iz] - kgrid[i]),Float64(w[i]))
-				# end
-				# @cuprintf("w[%ld] = %lf\n",i,convert(Float64,w[i]))
-				# w[i] = CUDAnative.pow(1.0,1-eta)/(1-eta) + beta * Exp 
+
+			# CUDAnative.pow(ydepK[ik,iz] - kgrid[i],1-eta)#/(1-eta) + beta * Exp 
+			# @cuprintf("ydepK[ik,iz] - kgrid[i]= %lf\n",convert(Float64,ydepK[ik,iz] - kgrid[i]))
+		# if ik==1 & iz==1
+		# @cuprintf("on block %ld, thread %ld, ik=%ld, iz=%ld. Exp= %lf\n", Int64(blockIdx().x), Int64(threadIdx().x), Int(ik),Int(iz),Exp)
+		# end
+			w[i] = CUDAnative.pow(convert(Float64,ydepK[ik,iz] - kgrid[i]),1-eta)/(1-eta) + beta * Exp 
+			@cuprintf("on block %ld, thread %ld, ik=%ld, iz=%ld, ufun = %lf, w = %lf,khi=%ld\n",Int64(blockIdx().x), Int64(threadIdx().x), Int(ik),Int(iz),CUDAnative.pow(convert(Float64,ydepK[ik,iz] - kgrid[i]),1-eta)/(1-eta),Float64(w[i]),khi)
+			# w[i] = Float64(i) + beta * Exp 
+			# @cuprintf("on block %ld, thread %ld, w[%ld] = %lf\n", Int64(blockIdx().x), Int64(threadIdx().x), i, Float64(w[i]))
+			# if ydepK[ik,iz] - kgrid[i] < 0
+			# 	@cuprintf("ydepK[ik,iz] - kgrid[i]= %lf, w[i] = %lf\n",convert(Float64,ydepK[ik,iz] - kgrid[i]),Float64(w[i]))
+			# end
+			# @cuprintf("w[%ld] = %lf\n",i,convert(Float64,w[i]))
+			# w[i] = CUDAnative.pow(1.0,1-eta)/(1-eta) + beta * Exp 
 			# w[i] = CUDAnative.pow(1.0,2.0) + beta * Exp 
 			# w[i] = CUDAnative.pow(x,2.0) + beta * Exp 
 		end
 
-		# # maximization
-		# if any(isfinite.(w))
-			max_kernel_ub(w,m,ix,khi)
+		max_kernel_ub(w,m,ix,khi)
+
+		# if ik==1 & iz==1
+		# @cuprintf("on block %ld, thread %ld, ik=%ld, iz=%ld. Exp= %lf\n", Int64(blockIdx().x), Int64(threadIdx().x), Int(ik),Int(iz),Exp)
+		# end
+		# @cuprintf("on block %ld, thread %ld, ik=%ld, iz=%ld. max = %lf, id = %ld\n", Int64(blockIdx().x), Int64(threadIdx().x), Int(ik),Int(iz),Float64(m[1]),Int64(ix[1]))
+	# end
 		# else 
-			m[1] = 0
-			ix[1] = -1
+			# m[1] = 0
+			# ix[1] = -1
 		# end
 		# @cuprintf("index: [%ld,%ld], max = %lf, id = %ld\n",ik,iz,Float64(m[1]),ix[1])
 
 		V[ik,iz] = m[1]
+		# V[ik,iz] = ik + iz
+		# V[ik,iz] = Float32(1.0)
 		G[ik,iz] = ix[1]
 		return nothing
 	end
 end
 
-function runGPU()
-	p = Param()
+function runGPU(;par=Dict())
+	p = Param(par=par)
 	m = Model(p)
 	m = gpu_launcher(m,p)
 	return m

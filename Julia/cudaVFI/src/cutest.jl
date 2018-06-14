@@ -71,7 +71,7 @@ function poc_cpu1(;na::Int=100)
 				for ixm in axes(V,4)
 					for it in axes(V,5)
 						for ih in axes(V,6)
-							w = agrid .- 0.4*agrid.^2# .- LinearIndices(V)[ia,iy,ip,ixm,it,ih]
+							w = agrid .- 0.4*agrid.^2 #.+ LinearIndices(V)[ia,iy,ip,ixm,it,ih]
 							v,i = findmax(w)
 							V[LinearIndices(V)[ia,iy,ip,ixm,it,ih]] = v
 							iV[LinearIndices(V)[ia,iy,ip,ixm,it,ih]] = i
@@ -115,35 +115,38 @@ function poc_gpu1(;na::Int=100)
 
 end
 function max_kernel_ub(v::CuDeviceVector{Float32},m::CuDeviceVector{Float32},ix::CuDeviceVector{Int},khi::Int)
-	r = v[1]
-	ix[1] = 1
-	for i in 2:khi
+	r = typemin(Float32)
+	id = 0
+	for i in 1:khi
 		# @cuprintf("v[i] = %lf\n",Float64(v[i]))
 		# @cuprintf("r = %lf,ix = %ld\n",r,ix[1])
 		if v[i] > r
 			r = v[i]
-			ix[1] = i
+			id = i
 		end
 	end
 	m[1] = r
+	ix[1] = id
 		# @cuprintf("returning m[1]= %lf,ix = %ld\n",Float64(m[1]),Int64(ix[1]))
 	return nothing
 	#return r
 end
 
 
+
 function max_kernel(v::CuDeviceVector{Float32},m::CuDeviceVector{Float32},ix::CuDeviceVector{Int})
-	r = v[1]
-	ix[1] = 1
-	for i in 2:length(v)
+	r = typemin(Float32)
+	id = 0
+	for i in 1:length(v)
 		# @cuprintf("v[i] = %lf\n",Float64(v[i]))
 		# @cuprintf("r = %lf,ix = %ld\n",r,ix[1])
 		if v[i] > r
 			r = v[i]
-			ix[1] = i
+			id = i
 		end
 	end
 	m[1] = r
+	ix[1] = id
 		# @cuprintf("returning m[1]= %lf,ix = %ld\n",Float64(m[1]),Int64(ix[1]))
 	return nothing
 	#return r
@@ -155,13 +158,46 @@ function poc_kernel(V::CuDeviceArray{Float32},iV::CuDeviceArray{Int},
 	# ii = CartesianIndices(V)[idx]
 	for i in 1:length(w)
 		# w[i] = a - 0.4*a^2 - vhm(Tuple(ii)...)
-		w[i] = a[i] - 0.4*a[i]^2 #- vhm(1,1,1,1,1,1)
+		w[i] = a[i] - 0.4*a[i]^2
 	end
 	v = max_kernel(w,m,ix)
 	V[idx] = m[1]
 	iV[idx] = ix[1]
 	return nothing
 end
+
+function state_kernel3D(V::CuDeviceArray{Float32},iV::CuDeviceArray{Float32})
+
+	n = size(V)
+	@assert length(n)==3
+	idx = (blockIdx().x-1) * blockDim().x + threadIdx().x
+	# idx = threadIdx().x
+	# what linear index of the array V is that ???
+	ix = CUDAnative.mod(Float64(n[1]),Float64(idx))
+	# ix = mod(idx,n[1])
+	# iy = mod(, n[2])
+	# iy = mod(idx / n[1] ,n[2])
+	iy = CUDAnative.mod(Float64(n[2]),Float64(idx / n[1] ))
+	# iz = idx / (n[1]*n[2])
+	iz = idx / (n[1]*n[2])
+	q = ix + n[1]*(iy-1) + n[1]*n[2]*(iz-1)
+	@cuprintf("q = %lf\n",q)
+	iV[idx] = q
+	return nothing
+end
+
+function test3D()
+	V = rand(Float32,3,4,5)
+	iV = zeros(Float32,size(V))
+	d_V = CuArray(V)
+	d_iV = CuArray(iV)
+	n = length(V)
+
+	@cuda threads=n state_kernel3D(d_V,d_iV)
+
+	return Array(d_iV)
+end
+
 
 
 

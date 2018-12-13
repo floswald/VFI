@@ -166,28 +166,112 @@ function poc_kernel(V::CuDeviceArray{Float32},iV::CuDeviceArray{Int},
 	return nothing
 end
 
+function state_3D()
+	V = rand(2,3,4)
+	iV = zeros(Int,size(V))
+
+	n = size(V)
+	li = CartesianIndices(V)
+	for i in 1:length(V)
+		println(li[i])
+		ix = mod(i,n[1])
+		iy = mod(i/n[1],n[2]+1)
+		iz = i / (n[1]*n[2])
+		println("ix=$ix,iy=$iy,iz=$iz")
+		iV[i] = round(Int,ix + (iy-1)*n[1] + (iz-1)*n[1]*n[2])
+	end
+	return iV
+
+end
+
+
+function do3D()
+
+	V = zeros(Int64,2,3,4)
+	ind = 5
+	d_V = CuArray(V)
+	@cuda threads=10 ind2sub3Dkernel(d_V)
+	# copy!(V,d_V)
+	# x = Array(d_V)
+	# println(x[1])
+	# return d_V
+
+end
+function ind2sub3Dkernel(V::CuDeviceArray{Int64})
+	idx = (blockIdx().x-1) * blockDim().x + threadIdx().x
+	m = size(V)
+	n = myind2sub3D(size(V),idx)
+	# n = mytuple()  # "works"
+	@assert idx == n[1] + (n[2]-1)*m[1] + (n[3]-1)*m[1]*m[2]
+	V[idx] = n[1] + (n[2]-1)*m[1] + (n[3]-1)*m[1]*m[2]
+end
+function mytuple()
+	(1,2)
+end
+
+
+function myind2sub3D(dims::Tuple{Integer,Vararg{Integer}}, ind::Int)
+    ndims = length(dims)
+    @assert ndims==3
+    stride = dims[1]
+    for i=2:ndims-1
+        stride *= dims[i]
+    end
+    i2 = 0
+    i3 = 0
+    i = 2
+        rest = rem(ind-1, stride) + 1
+        i3 = div(ind - rest, stride) + 1
+        ind = rest
+        stride = div(stride, dims[i])
+    i = 1
+        rest = rem(ind-1, stride) + 1
+        i2 = div(ind - rest, stride) + 1
+        ind = rest
+        stride = div(stride, dims[i])
+    o = tuple(ind,i2,i3)
+    # printing does not work
+	# @cuprintf("my indices are %ld, %ld, %ld\n",o[1],o[2],o[3])
+    # @cuprintf("i have ")
+    return o
+
+    # original implementation
+    # sub[1] = ind
+    # return sub
+    # for i=(ndims-1):-1:1
+    #     rest = rem(ind-1, stride) + 1
+    #     sub = tuple(div(ind - rest, stride) + 1, sub...)
+    #     ind = rest
+    #     stride = div(stride, dims[i])
+    # end
+    # return tuple(ind, sub...)
+end
+
 function state_kernel3D(V::CuDeviceArray{Float32},iV::CuDeviceArray{Float32})
+
+	# linear index of V(x,y,z) = i
+	# i = ix + nx*(iy-1) + nx*ny*(iz-1)
 
 	n = size(V)
 	@assert length(n)==3
 	idx = (blockIdx().x-1) * blockDim().x + threadIdx().x
-	# idx = threadIdx().x
 	# what linear index of the array V is that ???
-	ix = CUDAnative.mod(Float64(n[1]),Float64(idx))
-	# ix = mod(idx,n[1])
-	# iy = mod(, n[2])
-	# iy = mod(idx / n[1] ,n[2])
-	iy = CUDAnative.mod(Float64(n[2]),Float64(idx / n[1] ))
-	# iz = idx / (n[1]*n[2])
+	# ix = CUDAnative.mod(Float64(n[1]),Float64(idx))
+	@cuprintf("idx = %ld\n",idx)
+	# ix = mod(n[1],idx)  # why does that return a float?
+	ix = rem(idx,n[1])  # that's the call id *like* to use, but that result is clearly wrong
+	@cuprintf("ix = %ld\n",ix)
+	# iy = rem(n[2],idx / n[1])
+	iy = CUDAnative.mod(Float64(idx / n[1] ),Float64(n[2]))
+	@cuprintf("iy = %lf\n",iy)
 	iz = idx / (n[1]*n[2])
 	q = ix + n[1]*(iy-1) + n[1]*n[2]*(iz-1)
-	@cuprintf("q = %lf\n",q)
 	iV[idx] = q
 	return nothing
 end
 
 function test3D()
-	V = rand(Float32,3,4,5)
+	V = rand(Float32,2,2,3)
 	iV = zeros(Float32,size(V))
 	d_V = CuArray(V)
 	d_iV = CuArray(iV)

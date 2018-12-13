@@ -32,9 +32,9 @@ version = "0.8.3"
 
 [[CUDAnative]]
 deps = ["CUDAapi", "CUDAdrv", "InteractiveUtils", "LLVM", "Libdl", "Logging", "Pkg", "Test"]
-git-tree-sha1 = "c1cbd015b3ab7ac5384a6f80e113f559a71b1e9e"
+path = "/home/floswald/.julia/dev/CUDAnative"
 uuid = "be33ccc6-a3ff-5ff2-a52e-74243cff1e17"
-version = "0.8.3"
+version = "0.8.3+"
 
 [[CommonSubexpressions]]
 git-tree-sha1 = "9c1ff0c29342eef820dd8cf9f5a8cdd19a21b9ac"
